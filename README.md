@@ -24,7 +24,7 @@ bash train_ade.sh
 ### Citation
 If you use this code for your research, please cite our papers.
 ```
-@article{zhan2021bi,
+@article{zhan2021rabit,
   title={Bi-level feature alignment for versatile image translation and manipulation},
   author={Zhan, Fangneng and Yu, Yingchen and Wu, Rongliang and Cui, Kaiwen and Xiao, Aoran and Lu, Shijian and Shao, Ling},
   journal={arXiv preprint arXiv:2107.03021},
