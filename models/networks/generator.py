@@ -44,7 +44,7 @@ class SEACEGenerator(BaseNetwork):
         self.G_out_0 = SEACEResnetBlock(4 * nf, 2 * nf, opt, feat_nc=128)
         self.G_out_1 = SEACEResnetBlock(2 * nf, 1 * nf, opt, feat_nc=ic)
 
-        self.conv_img1 = nn.Conv2d(1, seg, 3, padding=1)
+        self.conv_img1 = nn.Conv2d(1 * nf, 3, 3, padding=1)
         self.up = nn.Upsample(scale_factor=2)
         # self.conv_confi1 = nn.Conv2d(1 * nf, 3, 3, padding=1)
 
