@@ -9,23 +9,71 @@ from functools import partial, wraps, reduce
 from PIL import Image
 # helper functions
 
+def sinkhorn_forward(C, mu, nu, epsilon, max_iter):
+    """standard forward of sinkhorn."""
+    bs, _, k_ = C.size()
+
+    v = torch.ones([bs, 1, k_])/(k_)
+    G = torch.exp(-C/epsilon)
+    if torch.cuda.is_available():
+        v = v.cuda()
+
+    for _ in range(max_iter):
+        u = mu/(G*v).sum(-1, keepdim=True)
+        v = nu/(G*u).sum(-2, keepdim=True)
+    Gamma = u*G*v
+    return Gamma
+
+
+def ot_topk(logit, k, epsilon=5e-2, max_iter=10):
+    # logit.shape=n, score
+    logit = 1 - logit
+    anchors = torch.FloatTensor([0, 1]).view([1, 1, 2])
+    if torch.cuda.is_available():
+        anchors = anchors.cuda()
+    bs, n = logit.size()
+    logit = logit.view([bs, n, 1])
+
+    scores_ = logit.clone().detach()
+    max_scores = torch.max(scores_).detach()
+    scores_[scores_==float('-inf')] = float('inf')
+    min_scores = torch.min(scores_).detach()
+    filled_value = min_scores - (max_scores-min_scores)
+    mask = logit==float('-inf')
+    scores = logit.masked_fill(mask, filled_value)
+
+    C = (scores-anchors)**2
+    C = C / (C.max().detach())
+    mu = torch.ones([bs, n, 1], requires_grad=False)/n
+    nu = torch.FloatTensor([k/n, (n-k)/n]).view([1, 1, 2])
+    nu = nu.repeat(bs, 1, 1)
+
+    if torch.cuda.is_available():
+        mu = mu.cuda()
+        nu = nu.cuda()
+
+    Gamma = sinkhorn_forward(C, mu, nu, epsilon, max_iter)
+    A = Gamma[:,:,0] * n
+    return A
+
+
+def differentiable_topk(logit, k):
+    # logit.shape=b,i,j
+    x = logit.clone()
+
+    index_ls = []
+    values, indices = x.topk(k, dim=-1)
+    index_ls.append(indices.unsqueeze(-1))
+
+    values_sum = values.sum(-1, keepdim=True)
+    topk_tensors = torch.zeros_like(x).scatter_(-1, indices, values)
+
+    ret = topk_tensors / values_sum - logit.detach() + logit
+    return ret
+
+
+
 def differentiable_topk_old(x, k, temperature=1.):
-    *_, n, dim = x.shape
-    topk_tensors = []
-
-    for i in range(k):
-        is_last = i == (k - 1)
-        values, indices = (x * 100).softmax(dim=-1).topk(1, dim=-1)
-        topks = torch.zeros_like(x).scatter_(-1, indices, values)
-        topks = topks.unsqueeze(-1)
-        topk_tensors.append(topks)
-        if not is_last:
-            x.scatter_(-1, indices, float('-inf'))
-    topks = torch.cat(topk_tensors, dim=-1)
-    return topks
-    # return topks.reshape(*_, k * n, dim)
-
-def differentiable_topk(x, k, temperature=1.):
     *_, n, dim = x.shape
     topk_tensors = []
 
@@ -38,7 +86,6 @@ def differentiable_topk(x, k, temperature=1.):
             x.scatter_(-1, indices, float('-inf'))
     topks = torch.cat(topk_tensors, dim=-1)
     return topks
-
 
 class RankNet(nn.Module):
     def __init__(self, patch_size, temperature, opt):
@@ -67,10 +114,10 @@ class RankNet(nn.Module):
         Corr = torch.einsum('bei,bej->bij', sq, sk)
         # R_ = torch.matmul(sq, sk.permute(0, 2, 1))
 
-        R = F.softmax(Corr * 1000, dim=-1).unsqueeze(-1)
-        R_ = F.softmax(Corr.transpose(1, 2) * 1000, dim=-1).unsqueeze(-1)
-        # R = differentiable_topk(Corr, k=topk, temperature=self.temperature)
-        # R_ = differentiable_topk(Corr.transpose(1, 2), k=topk, temperature=self.temperature)
+        # R = F.softmax(Corr * 1000, dim=-1).unsqueeze(-1)
+        # R_ = F.softmax(Corr.transpose(1, 2) * 1000, dim=-1).unsqueeze(-1)
+        R = differentiable_topk(Corr, k=topk)
+        R_ = differentiable_topk(Corr.transpose(1, 2), k=topk)
 
         return R, R_
 
