@@ -12,7 +12,14 @@ cd ../../
 
 **VGG model** for computing loss. Download from [here](https://drive.google.com/file/d/1fp7DAiXdf0Ay-jANb8f0RHYLTRyjNv4m/view?usp=sharing), move it to `models/`.
 
-For the preparation of datasets, please refer to [CoCosNet](https://github.com/microsoft/CoCosNet).
+
+
+## Datasets
+For the datasets for translation, please refer to [CoCosNet](https://github.com/microsoft/CoCosNet).
+For the datasets for image editing, you can download it from [Google Drive](https://drive.google.com/file/d/1irgkoyjae8hXZ-zZmiUlX1NQjnLbPE9S/view?usp=sharing).
+
+## Translation Results
+Some prediction results of our model is provided in [Google Drive](https://drive.google.com/file/d/1to6_wFfMSQ0sA8e8Fl73OuMiHFv8TtbX/view?usp=sharing).
 
 
 ## Training
