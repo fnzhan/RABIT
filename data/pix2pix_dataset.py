@@ -4,10 +4,12 @@
 from data.base_dataset import BaseDataset, get_params, get_transform
 import torch
 import torchvision.transforms as transforms
+import torch.nn.functional as F
 from PIL import Image
 import util.util as util
 import os
 import random
+import numpy as np
 #from scipy.ndimage.filters import gaussian_filter
 
 
@@ -61,16 +63,53 @@ class Pix2pixDataset(BaseDataset):
         params1 = get_params(self.opt, label.size)
         transform_label = get_transform(self.opt, params1, method=Image.NEAREST, normalize=False)
         label_tensor = transform_label(label) * 255.0
+
+        # print (label_tensor)
+        spe = self.semantic_position_encoding(label_tensor)
         label_tensor[label_tensor == 255] = self.opt.label_nc  # 'unknown' is opt.label_nc
-        return label_tensor, params1
+        return spe, label_tensor, params1
+
+    def semantic_position_encoding(self, label):
+        label = label.unsqueeze(0)
+        label = F.interpolate(label, size=(64, 64), mode='nearest')
+        label = label.squeeze()
+
+        h, w = label.shape
+        coord = torch.zeros((3, h, w))
+        x = torch.arange(0, w, 1.0) / 255.0
+        y = torch.arange(0, h, 1.0) / 255.0
+        xx, yy = torch.meshgrid(x, y)
+
+        ids = torch.unique(label)
+        for id in ids:
+            mask = (label == id).float()
+            xx_masked = xx * mask
+            yy_masked = yy * mask
+
+            num, xx_sum, yy_sum = mask.sum(), xx_masked.sum(), yy_masked.sum()
+            xx_center, yy_center = xx_sum / num, yy_sum / num
+
+            # print(id, xx_center, yy_center)
+            xx_relative = (xx_masked - xx_center) * mask
+            yy_relative = (yy_masked - yy_center) * mask
+            rr_relative = torch.sqrt((torch.pow(xx_relative, 2) + torch.pow(yy_relative, 2)).float())
+
+            # print(mask.shape)
+            coord[0, :, :] += xx_relative.float()
+            coord[1, :, :] += yy_relative.float()
+            coord[2, :, :] += rr_relative.float()
+
+        return coord
+
 
     def __getitem__(self, index):
         # LabelImage
-        # index = 312 * 3 + 1
         label_path = self.label_paths[index]
         image_path = self.image_paths[index]
 
-        label_tensor, params1 = self.get_label_tensor(label_path)
+        # label_path_ = '/home/fangneng.zfn/projects/ICCV2021/Editing/util/seg.png'
+
+        label_spe, label_tensor, params1 = self.get_label_tensor(label_path)
 
         if not self.opt.no_pairing_check:
             assert self.paths_match(label_path, image_path), \
@@ -83,7 +122,6 @@ class Pix2pixDataset(BaseDataset):
         ref_tensor = 0
         label_ref_tensor = 0
 
-        # image_path = self.image_paths[index + 10]
         random_p = random.random()
         if random_p < self.real_reference_probability or self.opt.phase == 'test':
         # if 0:
@@ -105,16 +143,15 @@ class Pix2pixDataset(BaseDataset):
             elif self.opt.dataset_mode == 'coco' or self.opt.dataset_mode == 'cocolayout':
                 path_ref_label = path_ref.replace('.jpg', '.png').replace('image', 'label')
                 path_ref_label = self.imgpath_to_labelpath(path_ref_label)
-            else: 
+            else:
                 path_ref_label = self.imgpath_to_labelpath(path_ref)
-            
-            label_ref_tensor, params = self.get_label_tensor(path_ref_label)
+
+            ref_spe, label_ref_tensor, params = self.get_label_tensor(path_ref_label)
             transform_image = get_transform(self.opt, params)
             ref_tensor = transform_image(image_ref)
             #ref_tensor = self.reference_transform(image_ref)
             self_ref_flag = torch.zeros_like(ref_tensor)
         else:
-        # if 1:
             pair = False
             if self.opt.dataset_mode == 'deepfashion' and self.opt.video_like:
                 # if self.opt.hdfs:
@@ -130,23 +167,26 @@ class Pix2pixDataset(BaseDataset):
                     path_ref = os.path.join(self.opt.dataroot, ref_name)
                     image_ref = Image.open(path_ref).convert('RGB')
                     label_ref_path = self.imgpath_to_labelpath(path_ref)
-                    label_ref_tensor, params = self.get_label_tensor(label_ref_path)
+                    ref_spe, label_ref_tensor, params = self.get_label_tensor(label_ref_path)
                     transform_image = get_transform(self.opt, params)
-                    ref_tensor = transform_image(image_ref) 
+                    ref_tensor = transform_image(image_ref)
                     pair = True
             if not pair:
-                label_ref_tensor, params = self.get_label_tensor(label_path)
+                ref_spe, label_ref_tensor, params = self.get_label_tensor(label_path)
                 transform_image = get_transform(self.opt, params)
                 ref_tensor = transform_image(image)
             #ref_tensor = self.reference_transform(image)
             self_ref_flag = torch.ones_like(ref_tensor)
+
 
         input_dict = {'label': label_tensor,
                       'image': image_tensor,
                       'path': image_path,
                       'self_ref': self_ref_flag,
                       'ref': ref_tensor,
-                      'label_ref': label_ref_tensor
+                      'label_ref': label_ref_tensor,
+                      'label_spe': label_spe,
+                      'ref_spe': ref_spe
                       }
 
         # Give subclasses a chance to modify the final output
